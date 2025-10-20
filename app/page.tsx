@@ -15,11 +15,21 @@ export default function Home() {
   const [reportText, setReportText] = useState("")
   const [result, setResult] = useState<any>(null)
   const [showConfig, setShowConfig] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
 
-  const handleProcess = () => {
-    const processor = new AttendanceProcessor()
-    const processedResult = processor.processReport(reportText)
-    setResult(processedResult)
+  const handleProcess = async () => {
+    setIsProcessing(true)
+    try {
+      const processor = new AttendanceProcessor()
+      const processedResult = await processor.processReport(reportText)
+      setResult(processedResult)
+    } catch (error) {
+      setResult({
+        error: `Error al procesar: ${error instanceof Error ? error.message : "Error desconocido"}`,
+      })
+    } finally {
+      setIsProcessing(false)
+    }
   }
 
   const handleClear = () => {
@@ -112,8 +122,12 @@ export default function Home() {
               />
             </div>
             <div className="flex gap-2">
-              <Button onClick={handleProcess} disabled={!reportText.trim()} className="bg-blue-600 hover:bg-blue-700">
-                Procesar Reporte
+              <Button
+                onClick={handleProcess}
+                disabled={!reportText.trim() || isProcessing}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {isProcessing ? "Procesando..." : "Procesar Reporte"}
               </Button>
               <Button variant="outline" onClick={handleClear}>
                 Limpiar
@@ -151,8 +165,8 @@ export default function Home() {
                         <tr className="border-t bg-white dark:bg-gray-900">
                           <td className="p-3 font-medium">{result.nombre}</td>
                           <td className="p-3">{result.horasTrabajadas}</td>
-                          <td className="p-3">${result.tarifa.toLocaleString("es-CL")}</td>
-                          <td className="p-3 font-semibold">${result.totalPagar.toLocaleString("es-CL")}</td>
+                          <td className="p-3">${result.tarifa?.toLocaleString("es-CL") || "0"}</td>
+                          <td className="p-3 font-semibold">${result.totalPagar?.toLocaleString("es-CL") || "0"}</td>
                           <td className="p-3">
                             <span
                               className={`inline-block rounded-full px-3 py-1 text-sm font-medium ${
@@ -164,11 +178,11 @@ export default function Home() {
                               }`}
                             >
                               {result.bono}
-                              {result.valorBono > 0 && ` (+$${result.valorBono.toLocaleString("es-CL")})`}
+                              {result.valorBono > 0 && ` (+$${result.valorBono?.toLocaleString("es-CL") || "0"})`}
                             </span>
                           </td>
                           <td className="p-3 text-lg font-bold text-blue-600 dark:text-blue-400">
-                            ${result.totalFinal.toLocaleString("es-CL")}
+                            ${result.totalFinal?.toLocaleString("es-CL") || "0"}
                           </td>
                         </tr>
                       </tbody>
