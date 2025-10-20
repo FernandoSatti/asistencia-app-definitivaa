@@ -90,7 +90,7 @@ export async function getWorkers(): Promise<Worker[]> {
   const { data, error } = await supabase.from("workers").select("*").order("nombre")
 
   if (error) {
-    console.error("[v0] Error loading workers from Supabase:", error)
+    console.error("Error loading workers from Supabase:", error)
     throw new Error(`Error loading workers: ${error.message}`)
   }
 
@@ -106,7 +106,7 @@ export async function saveWorker(worker: Worker) {
   })
 
   if (error) {
-    console.error("[v0] Error saving worker to Supabase:", error)
+    console.error("Error saving worker to Supabase:", error)
     throw new Error(`Error saving worker: ${error.message}`)
   }
 }
@@ -117,7 +117,7 @@ export async function getBonos() {
 
   if (error && error.code !== "PGRST116") {
     // PGRST116 is "no rows returned"
-    console.error("[v0] Error loading bonos from Supabase:", error)
+    console.error("Error loading bonos from Supabase:", error)
     throw new Error(`Error loading bonos: ${error.message}`)
   }
 
@@ -136,14 +136,14 @@ export async function setBonos(bono1: number, bono2: number) {
       .eq("id", existing.id)
 
     if (error) {
-      console.error("[v0] Error updating bonos in Supabase:", error)
+      console.error("Error updating bonos in Supabase:", error)
       throw new Error(`Error updating bonos: ${error.message}`)
     }
   } else {
     const { error } = await supabase.from("bonos").insert({ bono1_valor: bono1, bono2_valor: bono2 })
 
     if (error) {
-      console.error("[v0] Error inserting bonos in Supabase:", error)
+      console.error("Error inserting bonos in Supabase:", error)
       throw new Error(`Error inserting bonos: ${error.message}`)
     }
   }
