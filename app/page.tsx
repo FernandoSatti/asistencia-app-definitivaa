@@ -111,7 +111,7 @@ export default function Home() {
               variant="ghost"
               size="sm"
               className="gap-2"
-              onClick={() => window.open("https://alfonsa-tools-modern.vercel.app/", "_blank")}
+              onClick={() => window.open("https://alfonsa-tools-modern.vercel.app/")}
             >
               <ArrowLeft className="h-4 w-4" />
               Volver a Alfonsa Tools
