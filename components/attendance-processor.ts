@@ -90,7 +90,7 @@ export async function getWorkers(): Promise<Worker[]> {
   const { data, error } = await supabase.from("workers").select("*").order("nombre")
 
   if (error) {
-    console.error("Error loading workers from Supabase:", error)
+    console.error("[v0] Error loading workers from Supabase:", error)
     throw new Error(`Error loading workers: ${error.message}`)
   }
 
@@ -106,7 +106,7 @@ export async function saveWorker(worker: Worker) {
   })
 
   if (error) {
-    console.error("Error saving worker to Supabase:", error)
+    console.error("[v0] Error saving worker to Supabase:", error)
     throw new Error(`Error saving worker: ${error.message}`)
   }
 }
@@ -117,7 +117,7 @@ export async function getBonos() {
 
   if (error && error.code !== "PGRST116") {
     // PGRST116 is "no rows returned"
-    console.error("Error loading bonos from Supabase:", error)
+    console.error("[v0] Error loading bonos from Supabase:", error)
     throw new Error(`Error loading bonos: ${error.message}`)
   }
 
@@ -136,14 +136,14 @@ export async function setBonos(bono1: number, bono2: number) {
       .eq("id", existing.id)
 
     if (error) {
-      console.error("Error updating bonos in Supabase:", error)
+      console.error("[v0] Error updating bonos in Supabase:", error)
       throw new Error(`Error updating bonos: ${error.message}`)
     }
   } else {
     const { error } = await supabase.from("bonos").insert({ bono1_valor: bono1, bono2_valor: bono2 })
 
     if (error) {
-      console.error("Error inserting bonos in Supabase:", error)
+      console.error("[v0] Error inserting bonos in Supabase:", error)
       throw new Error(`Error inserting bonos: ${error.message}`)
     }
   }
@@ -156,7 +156,11 @@ export class AttendanceProcessor {
     this.empleadosConfig = await getWorkers()
   }
 
-  async processReport(reportText: string) {
+  async processReport(
+    reportText: string,
+    holidayDays: Set<string> = new Set(),
+    justifiedDays: Set<string> = new Set(),
+  ) {
     try {
       if (this.empleadosConfig.length === 0) {
         await this.initialize()
@@ -179,10 +183,11 @@ export class AttendanceProcessor {
         }
       }
 
-      // Extraer tabla de asistencia
       const { registrosTrabajados, totalDiasLaborales, diasFaltados } = this.extractAttendanceRecords(
         reportText,
         empleadoConfig,
+        holidayDays,
+        justifiedDays,
       )
 
       const totalHorasDescontadas = registrosTrabajados.reduce((sum, r) => sum + (r.horasDescontadas || 0), 0)
@@ -198,7 +203,8 @@ export class AttendanceProcessor {
       // Calcular pago base
       const totalPagar = horasRedondeadas * empleadoConfig.tarifa_hora
 
-      const bono = diasFaltados > 0 ? "sin bono" : this.determineBono(registrosTrabajados, empleadoConfig)
+      const bono =
+        diasFaltados > 0 ? "sin bono" : this.determineBono(registrosTrabajados, empleadoConfig, justifiedDays)
 
       const bonosConfig = await getBonos()
       let valorBono = 0
@@ -233,6 +239,8 @@ export class AttendanceProcessor {
   private extractAttendanceRecords(
     reportText: string,
     empleadoConfig: Worker,
+    holidayDays: Set<string>,
+    justifiedDays: Set<string>,
   ): { registrosTrabajados: DayRecord[]; totalDiasLaborales: number; diasFaltados: number } {
     const records: DayRecord[] = []
     const lines = reportText.split("\n")
@@ -261,6 +269,9 @@ export class AttendanceProcessor {
 
         totalDiasLaborales++
 
+        const esFeriado = holidayDays.has(fecha)
+        const esJustificado = justifiedDays.has(fecha)
+
         // Verificar si es falta
         const esFalta = resto.includes("Falta")
 
@@ -270,33 +281,55 @@ export class AttendanceProcessor {
         let horasDescontadas = 0
 
         if (esFalta) {
-          estado = "falta"
-          diasFaltados++
+          if (esFeriado) {
+            const horasNormales = this.calculateNormalWorkHours(empleadoConfig)
+            horas = horasNormales
+            estado = "feriado no trabajado"
+          } else if (esJustificado) {
+            estado = "falta justificada"
+          } else {
+            estado = "falta"
+            diasFaltados++
+          }
         } else if (entrada && salida) {
           horas = this.calculateHours(entrada, salida)
 
-          const [horaProgHora, horaProgMin] = empleadoConfig.hora_entrada_programada.split(":").map(Number)
-          const horaProgMinutos = horaProgHora * 60 + horaProgMin
+          if (esFeriado) {
+            horas = horas * 2
+            estado = "feriado trabajado"
+          } else {
+            const [horaProgHora, horaProgMin] = empleadoConfig.hora_entrada_programada.split(":").map(Number)
+            const horaProgMinutos = horaProgHora * 60 + horaProgMin
 
-          const [entradaHora, entradaMin] = entrada.split(":").map(Number)
-          const entradaMinutos = entradaHora * 60 + entradaMin
+            const [entradaHora, entradaMin] = entrada.split(":").map(Number)
+            const entradaMinutos = entradaHora * 60 + entradaMin
 
-          const diferencia = entradaMinutos - horaProgMinutos
+            const diferencia = entradaMinutos - horaProgMinutos
 
-          if (diferencia >= 10) {
-            minutosTarde = diferencia
+            if (diferencia >= 10 && !esJustificado) {
+              minutosTarde = diferencia
 
-            // Apply penalty: 10-59 minutes late = 1 hour discount, 60+ minutes = 2 hours discount
-            if (diferencia >= 60) {
-              horasDescontadas = 2
-            } else {
-              horasDescontadas = 1
+              // Apply penalty: 10-59 minutes late = 1 hour discount, 60+ minutes = 2 hours discount
+              if (diferencia >= 60) {
+                horasDescontadas = 2
+              } else {
+                horasDescontadas = 1
+              }
+            } else if (diferencia >= 10 && esJustificado) {
+              minutosTarde = diferencia // Still track it, but don't penalize
             }
-          }
 
-          estado = "trabajado"
+            estado = "trabajado"
+          }
         } else if (entrada || salida) {
-          estado = "incompleto"
+          if (esJustificado) {
+            // If justified, calculate normal work hours
+            const horasNormales = this.calculateNormalWorkHours(empleadoConfig)
+            horas = horasNormales
+            estado = "incompleto justificado"
+          } else {
+            estado = "incompleto"
+          }
         }
 
         records.push({
@@ -308,13 +341,35 @@ export class AttendanceProcessor {
           estado,
           minutosTarde,
           horasDescontadas,
+          esFeriado,
+          esJustificado,
         })
       }
     }
 
-    const registrosTrabajados = records.filter((r) => r.estado === "trabajado")
+    const registrosTrabajados = records.filter(
+      (r) =>
+        r.estado === "trabajado" ||
+        r.estado === "feriado trabajado" ||
+        r.estado === "feriado no trabajado" ||
+        r.estado === "falta justificada" ||
+        r.estado === "falta" ||
+        r.estado === "incompleto" ||
+        r.estado === "incompleto justificado",
+    )
 
     return { registrosTrabajados, totalDiasLaborales, diasFaltados }
+  }
+
+  private calculateNormalWorkHours(empleadoConfig: Worker): number {
+    const [entradaHora, entradaMin] = empleadoConfig.hora_entrada_programada.split(":").map(Number)
+    const [salidaHora, salidaMin] = (empleadoConfig.hora_salida_programada || "14:00").split(":").map(Number)
+
+    const entradaMinutos = entradaHora * 60 + entradaMin
+    const salidaMinutos = salidaHora * 60 + salidaMin
+
+    const diferenciaMinutos = salidaMinutos - entradaMinutos
+    return diferenciaMinutos / 60
   }
 
   private calculateHours(entrada: string, salida: string): number {
@@ -339,7 +394,7 @@ export class AttendanceProcessor {
     }
   }
 
-  private determineBono(registros: DayRecord[], empleadoConfig: Worker): string {
+  private determineBono(registros: DayRecord[], empleadoConfig: Worker, justifiedDays: Set<string>): string {
     if (registros.length === 0) return "sin bono"
 
     const [horaProgHora, horaProgMin] = empleadoConfig.hora_entrada_programada.split(":").map(Number)
@@ -349,6 +404,8 @@ export class AttendanceProcessor {
     let nuncaTarde = true
 
     for (const registro of registros) {
+      if (registro.esFeriado) continue
+
       if (!registro.entrada) continue
 
       const [entradaHora, entradaMin] = registro.entrada.split(":").map(Number)
@@ -361,8 +418,10 @@ export class AttendanceProcessor {
         siempreTemprano = false
       }
 
-      // Si llegó más de 10 minutos tarde, no cumple bono2
-      if (diferencia > 10) {
+      const esJustificado = justifiedDays.has(registro.fecha)
+
+      // Si llegó más de 10 minutos tarde (and not justified), no cumple bono2
+      if (diferencia > 10 && !esJustificado) {
         nuncaTarde = false
       }
     }
@@ -391,4 +450,6 @@ interface DayRecord {
   estado: string
   minutosTarde: number
   horasDescontadas: number
+  esFeriado?: boolean
+  esJustificado?: boolean
 }

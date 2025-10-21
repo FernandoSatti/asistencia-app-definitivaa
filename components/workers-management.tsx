@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { getWorkers, saveWorker, type Worker } from "./attendance-processor"
+import Swal from "sweetalert2"
 
 const DIAS_SEMANA = [
   { id: "Lu", label: "Lunes" },
@@ -59,9 +60,19 @@ export function WorkersManagement() {
     try {
       await saveWorker(editedWorker)
       await loadWorkers()
-      alert(`Configuración de ${editedWorker.nombre} guardada correctamente`)
+      Swal.fire({
+        icon: "success",
+        title: "Guardado exitoso",
+        text: `Configuración de ${editedWorker.nombre} guardada correctamente`,
+        confirmButtonColor: "#3b82f6",
+      })
     } catch (error) {
-      alert("Error al guardar la configuración")
+      Swal.fire({
+        icon: "error",
+        title: "Error",
+        text: "Error al guardar la configuración",
+        confirmButtonColor: "#ef4444",
+      })
       console.error(error)
     }
   }

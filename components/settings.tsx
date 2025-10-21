@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { getBonos, setBonos } from "./attendance-processor"
+import Swal from "sweetalert2"
 
 export function Settings() {
   const [bono1, setBono1Value] = useState(0)
@@ -27,9 +28,19 @@ export function Settings() {
   const handleSave = async () => {
     try {
       await setBonos(bono1, bono2)
-      alert("Bonos guardados correctamente")
+      Swal.fire({
+        icon: "success",
+        title: "Guardado exitoso",
+        text: "Bonos guardados correctamente",
+        confirmButtonColor: "#3b82f6",
+      })
     } catch (error) {
-      alert("Error al guardar los bonos")
+      Swal.fire({
+        icon: "error",
+        title: "Error",
+        text: "Error al guardar los bonos",
+        confirmButtonColor: "#ef4444",
+      })
       console.error(error)
     }
   }
