@@ -265,31 +265,44 @@ export class AttendanceProcessor {
         // Verificar si es día laboral
         const esDiaLaboral = empleadoConfig.dias_trabajo.includes(dia)
 
-        if (!esDiaLaboral) continue
-
-        totalDiasLaborales++
-
         const esFeriado = holidayDays.has(fecha)
         const esJustificado = justifiedDays.has(fecha)
 
-        // Verificar si es falta
-        const esFalta = resto.includes("Falta")
+        const esFaltaExplicita = resto.includes("Falta")
+        const esFaltaImplicita = !entrada && !salida && !esFaltaExplicita
+        const esFalta = esFaltaExplicita || (esFaltaImplicita && esDiaLaboral)
 
         let horas: number | null = null
         let estado = "no laboral"
         let minutosTarde = 0
         let horasDescontadas = 0
 
+        if (esDiaLaboral) {
+          totalDiasLaborales++
+        }
+
         if (esFalta) {
           if (esFeriado) {
-            const horasNormales = this.calculateNormalWorkHours(empleadoConfig)
-            horas = horasNormales
-            estado = "feriado no trabajado"
+            if (esDiaLaboral) {
+              const horasNormales = this.calculateNormalWorkHours(empleadoConfig)
+              horas = horasNormales
+              estado = "feriado no trabajado"
+            } else {
+              estado = "falta (no laboral)"
+            }
           } else if (esJustificado) {
-            estado = "falta justificada"
+            if (esDiaLaboral) {
+              const horasNormales = this.calculateNormalWorkHours(empleadoConfig)
+              horas = horasNormales / 2
+              estado = "falta justificada"
+            } else {
+              estado = "falta (no laboral)"
+            }
           } else {
-            estado = "falta"
-            diasFaltados++
+            estado = esDiaLaboral ? "falta" : "falta (no laboral)"
+            if (esDiaLaboral) {
+              diasFaltados++
+            }
           }
         } else if (entrada && salida) {
           horas = this.calculateHours(entrada, salida)
@@ -319,16 +332,16 @@ export class AttendanceProcessor {
               minutosTarde = diferencia // Still track it, but don't penalize
             }
 
-            estado = "trabajado"
+            estado = esDiaLaboral ? "trabajado" : "trabajado (no laboral)"
           }
         } else if (entrada || salida) {
-          if (esJustificado) {
+          if (esJustificado && esDiaLaboral) {
             // If justified, calculate normal work hours
             const horasNormales = this.calculateNormalWorkHours(empleadoConfig)
             horas = horasNormales
             estado = "incompleto justificado"
           } else {
-            estado = "incompleto"
+            estado = esDiaLaboral ? "incompleto" : "incompleto (no laboral)"
           }
         }
 
@@ -347,16 +360,7 @@ export class AttendanceProcessor {
       }
     }
 
-    const registrosTrabajados = records.filter(
-      (r) =>
-        r.estado === "trabajado" ||
-        r.estado === "feriado trabajado" ||
-        r.estado === "feriado no trabajado" ||
-        r.estado === "falta justificada" ||
-        r.estado === "falta" ||
-        r.estado === "incompleto" ||
-        r.estado === "incompleto justificado",
-    )
+    const registrosTrabajados = records
 
     return { registrosTrabajados, totalDiasLaborales, diasFaltados }
   }
@@ -402,9 +406,14 @@ export class AttendanceProcessor {
 
     let siempreTemprano = true
     let nuncaTarde = true
+    let tieneFaltasJustificadas = false
 
     for (const registro of registros) {
       if (registro.esFeriado) continue
+
+      if (registro.estado === "falta justificada") {
+        tieneFaltasJustificadas = true
+      }
 
       if (!registro.entrada) continue
 
@@ -413,8 +422,7 @@ export class AttendanceProcessor {
 
       const diferencia = entradaMinutos - horaProgMinutos
 
-      // Si llegó menos de 10 minutos temprano, no cumple bono1
-      if (diferencia >= -10) {
+      if (diferencia >= 0) {
         siempreTemprano = false
       }
 
@@ -425,6 +433,8 @@ export class AttendanceProcessor {
         nuncaTarde = false
       }
     }
+
+    if (tieneFaltasJustificadas) return "sin bono"
 
     if (siempreTemprano) return "bono1"
     if (nuncaTarde) return "bono2"

@@ -10,8 +10,9 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { AttendanceProcessor } from "@/components/attendance-processor"
 import { Settings } from "@/components/settings"
 import { WorkersManagement } from "@/components/workers-management"
-import { ArrowLeft, SettingsIcon, Users } from "lucide-react"
+import { ArrowLeft, SettingsIcon, Users, Download } from "lucide-react"
 import Swal from "sweetalert2"
+import * as XLSX from "xlsx"
 
 export default function Home() {
   const [reportText, setReportText] = useState("")
@@ -20,6 +21,7 @@ export default function Home() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [holidayDays, setHolidayDays] = useState<Set<string>>(new Set())
   const [justifiedDays, setJustifiedDays] = useState<Set<string>>(new Set())
+  const [deuda, setDeuda] = useState<number>(0)
 
   const handleProcess = async () => {
     setIsProcessing(true)
@@ -54,6 +56,7 @@ export default function Home() {
     setResult(null)
     setHolidayDays(new Set())
     setJustifiedDays(new Set())
+    setDeuda(0)
   }
 
   const toggleHoliday = async (fecha: string) => {
@@ -102,6 +105,143 @@ export default function Home() {
     }
   }
 
+  const handleExportToExcel = () => {
+    if (!result) return
+
+    console.log("[v0] Starting Excel export...")
+    console.log("[v0] Result data:", result)
+    console.log("[v0] Deuda:", deuda)
+
+    try {
+      const wb = XLSX.utils.book_new()
+      console.log("[v0] Workbook created")
+
+      const totalFinalConDeuda = (result.totalFinal || 0) - deuda
+      const resumenData = [
+        ["REPORTE DE ASISTENCIA"],
+        [],
+        ["Empleado", result.nombre],
+        ["Horas Trabajadas", result.horasTrabajadas],
+        ["Tarifa por Hora", `$${result.tarifa?.toLocaleString("es-CL") || "0"}`],
+        ["Total a Pagar", `$${result.totalPagar?.toLocaleString("es-CL") || "0"}`],
+        ["Bono", result.bono],
+        ["Valor Bono", `$${result.valorBono?.toLocaleString("es-CL") || "0"}`],
+        ["Deuda", `$${deuda.toLocaleString("es-CL")}`],
+        ["Total Final", `$${totalFinalConDeuda.toLocaleString("es-CL")}`],
+        [],
+        ["Días Laborales", result.totalDiasLaborales],
+        ["Días Faltados", result.diasFaltados],
+        ["Horas Descontadas", result.horasDescontadas],
+      ]
+      console.log("[v0] Summary data prepared")
+
+      const wsResumen = XLSX.utils.aoa_to_sheet(resumenData)
+      XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen")
+      console.log("[v0] Summary sheet added")
+
+      if (result.detalles && result.detalles.length > 0) {
+        const detalleData = [
+          ["Fecha", "Día", "Entrada", "Salida", "Horas", "Estado", "Feriado", "Justificado"],
+          ...result.detalles.map((d: any) => [
+            d.fecha,
+            d.dia,
+            d.entrada || "-",
+            d.salida || "-",
+            d.horas?.toFixed(2) || "-",
+            d.estado,
+            d.esFeriado ? "Sí" : "No",
+            d.esJustificado ? "Sí" : "No",
+          ]),
+        ]
+        const wsDetalle = XLSX.utils.aoa_to_sheet(detalleData)
+        XLSX.utils.book_append_sheet(wb, wsDetalle, "Detalle por Día")
+        console.log("[v0] Detail sheet added")
+      }
+
+      const analisisData: any[] = [["ANÁLISIS DE PUNTUALIDAD"], []]
+
+      const llegadasTarde = result.detalles?.filter((d: any) => d.minutosTarde > 0) || []
+      if (llegadasTarde.length > 0) {
+        analisisData.push(["LLEGADAS TARDE"], ["Fecha", "Día", "Minutos Tarde", "Horas Descontadas"])
+        llegadasTarde.forEach((d: any) => {
+          analisisData.push([d.fecha, d.dia, d.minutosTarde, d.horasDescontadas])
+        })
+        analisisData.push([])
+      }
+
+      const diasJustificados = result.detalles?.filter((d: any) => d.esJustificado) || []
+      if (diasJustificados.length > 0) {
+        analisisData.push(["DÍAS JUSTIFICADOS"], ["Fecha", "Día", "Estado"])
+        diasJustificados.forEach((d: any) => {
+          analisisData.push([d.fecha, d.dia, d.estado])
+        })
+        analisisData.push([])
+      }
+
+      const diasFeriados = result.detalles?.filter((d: any) => d.esFeriado) || []
+      if (diasFeriados.length > 0) {
+        analisisData.push(["DÍAS FERIADOS"], ["Fecha", "Día", "Estado", "Horas"])
+        diasFeriados.forEach((d: any) => {
+          analisisData.push([d.fecha, d.dia, d.estado, d.horas?.toFixed(2) || "-"])
+        })
+        analisisData.push([])
+      }
+
+      const ausencias = result.detalles?.filter((d: any) => d.estado === "falta") || []
+      if (ausencias.length > 0) {
+        analisisData.push(["AUSENCIAS"], ["Fecha", "Día"])
+        ausencias.forEach((d: any) => {
+          analisisData.push([d.fecha, d.dia])
+        })
+        analisisData.push([])
+      }
+
+      analisisData.push(
+        ["ESTADO DEL BONO"],
+        ["Bono", result.bono],
+        ["Valor", `$${result.valorBono?.toLocaleString("es-CL") || "0"}`],
+      )
+
+      const wsAnalisis = XLSX.utils.aoa_to_sheet(analisisData)
+      XLSX.utils.book_append_sheet(wb, wsAnalisis, "Análisis")
+      console.log("[v0] Analysis sheet added")
+
+      const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" })
+      console.log("[v0] Workbook written to array")
+
+      const blob = new Blob([wbout], { type: "application/octet-stream" })
+      console.log("[v0] Blob created")
+
+      const fileName = `Reporte_${result.nombre.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.xlsx`
+      console.log("[v0] Filename:", fileName)
+
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      console.log("[v0] File downloaded successfully")
+
+      Swal.fire({
+        icon: "success",
+        title: "Excel Exportado",
+        text: `El reporte se ha exportado correctamente como ${fileName}`,
+        timer: 2000,
+        showConfirmButton: false,
+      })
+    } catch (error) {
+      console.error("[v0] Error exporting to Excel:", error)
+      Swal.fire({
+        icon: "error",
+        title: "Error al Exportar",
+        text: error instanceof Error ? error.message : "Hubo un error al generar el archivo Excel",
+      })
+    }
+  }
+
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 dark:from-gray-950 dark:via-gray-900 dark:to-blue-950">
       <div className="border-b bg-white/80 backdrop-blur-sm dark:bg-gray-900/80">
@@ -111,7 +251,7 @@ export default function Home() {
               variant="ghost"
               size="sm"
               className="gap-2"
-              onClick={() => window.open("https://alfonsa-tools-modern.vercel.app/")}
+              onClick={() => window.open("https://alfonsa-tools-modern.vercel.app/", "_self")}
             >
               <ArrowLeft className="h-4 w-4" />
               Volver a Alfonsa Tools
@@ -204,7 +344,20 @@ export default function Home() {
         {result && (
           <Card className="border-blue-200 bg-white/50 backdrop-blur-sm dark:border-blue-900 dark:bg-gray-900/50 animate-slide-up">
             <CardHeader>
-              <CardTitle>Resultado del Cálculo</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle>Resultado del Cálculo</CardTitle>
+                {!result.error && (
+                  <Button
+                    onClick={handleExportToExcel}
+                    variant="outline"
+                    size="sm"
+                    className="gap-2 bg-green-50 hover:bg-green-100 text-green-700 border-green-300 dark:bg-green-950 dark:hover:bg-green-900 dark:text-green-300 dark:border-green-800 transition-all hover:scale-105"
+                  >
+                    <Download className="h-4 w-4" />
+                    Exportar a Excel
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               {result.error ? (
@@ -217,12 +370,13 @@ export default function Home() {
                   <div className="overflow-hidden rounded-lg border animate-fade-in">
                     <table className="w-full border-collapse">
                       <thead>
-                        <tr className="bg-blue-50 dark:bg-blue-950">
+                        <tr className="bg-blue-50 dark:bg-blue-900">
                           <th className="p-3 text-left font-semibold">Empleado</th>
                           <th className="p-3 text-left font-semibold">Horas</th>
                           <th className="p-3 text-left font-semibold">Tarifa x Hora</th>
                           <th className="p-3 text-left font-semibold">Total a Pagar</th>
                           <th className="p-3 text-left font-semibold">Bono</th>
+                          <th className="p-3 text-left font-semibold">Deuda</th>
                           <th className="p-3 text-left font-semibold">Total Final</th>
                         </tr>
                       </thead>
@@ -246,8 +400,18 @@ export default function Home() {
                               {result.valorBono > 0 && ` (+$${result.valorBono?.toLocaleString("es-CL") || "0"})`}
                             </span>
                           </td>
+                          <td className="p-3">
+                            <input
+                              type="number"
+                              min="0"
+                              value={deuda}
+                              onChange={(e) => setDeuda(Number(e.target.value) || 0)}
+                              className="w-24 rounded border border-gray-300 px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-800"
+                              placeholder="0"
+                            />
+                          </td>
                           <td className="p-3 text-lg font-bold text-blue-600 dark:text-blue-400">
-                            ${result.totalFinal?.toLocaleString("es-CL") || "0"}
+                            ${((result.totalFinal || 0) - deuda).toLocaleString("es-CL")}
                           </td>
                         </tr>
                       </tbody>
